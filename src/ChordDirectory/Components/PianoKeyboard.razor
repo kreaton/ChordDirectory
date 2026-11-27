@@ -1,0 +1,138 @@
+@implements IDisposable
+@inject AudioService Audio
+
+@* An SVG piano. Keys listed in Marks are highlighted; keys that are currently sounding glow. *@
+<div class="piano-scroll">
+    <svg class="piano" viewBox="0 0 @_width @KeyHeight" style="min-width:@(_whiteKeys.Count * 30)px"
+         role="group" aria-label="@AriaLabel">
+
+        @foreach (var key in _whiteKeys)
+        {
+            var midi = key.Midi;
+            var mark = MarkFor(midi);
+            <g class="@KeyClasses(midi, mark, false)" tabindex="0" role="button"
+               aria-label="@Notation.MidiName(midi)"
+               @onclick="() => PressAsync(midi)"
+               @onkeydown="e => OnKeyDown(e, midi)">
+                <rect class="key-face" x="@key.X" y="0" width="@WhiteWidth" height="@KeyHeight" rx="4" />
+                @if (mark is not null)
+                {
+                    <circle class="key-dot" cx="@(key.X + WhiteWidth / 2)" cy="@(KeyHeight - 30)" r="14" />
+                    @SvgText("key-label", key.X + WhiteWidth / 2, KeyHeight - 30, mark.Label)
+                }
+                else if (ShowNames || midi % 12 == 0)
+                {
+                    @SvgText("key-name", key.X + WhiteWidth / 2, KeyHeight - 10, Notation.MidiName(midi))
+                }
+            </g>
+        }
+
+        @foreach (var key in _blackKeys)
+        {
+            var midi = key.Midi;
+            var mark = MarkFor(midi);
+            <g class="@KeyClasses(midi, mark, true)" tabindex="0" role="button"
+               aria-label="@Notation.MidiName(midi)"
+               @onclick="() => PressAsync(midi)"
+               @onkeydown="e => OnKeyDown(e, midi)">
+                <rect class="key-face" x="@key.X" y="0" width="@BlackWidth" height="@BlackHeight" rx="3" />
+                @if (mark is not null)
+                {
+                    <circle class="key-dot" cx="@(key.X + BlackWidth / 2)" cy="@(BlackHeight - 22)" r="10" />
+                    @SvgText("key-label small", key.X + BlackWidth / 2, BlackHeight - 22, mark.Label)
+                }
+            </g>
+        }
+    </svg>
+</div>
+
+@code {
+    private const int WhiteWidth = 40;
+    private const int KeyHeight = 150;
+    private const int BlackWidth = 24;
+    private const int BlackHeight = 94;
+
+    private readonly record struct Key(int Midi, int X);
+
+    private List<Key> _whiteKeys = [];
+    private List<Key> _blackKeys = [];
+    private int _width;
+
+    /// <summary>First key to draw (inclusive). Should be a white key, normally a C.</summary>
+    [Parameter] public int StartMidi { get; set; } = 48;
+
+    /// <summary>Last key to draw (inclusive). Should be a white key, normally a C.</summary>
+    [Parameter] public int EndMidi { get; set; } = 72;
+
+    /// <summary>Keys to highlight, keyed by MIDI note number.</summary>
+    [Parameter] public IReadOnlyDictionary<int, KeyMark>? Marks { get; set; }
+
+    /// <summary>Label every white key with its note name (otherwise only the Cs are labelled).</summary>
+    [Parameter] public bool ShowNames { get; set; }
+
+    /// <summary>Whether clicking a key plays its note.</summary>
+    [Parameter] public bool PlayOnClick { get; set; } = true;
+
+    [Parameter] public EventCallback<int> OnKeyPressed { get; set; }
+
+    [Parameter] public string AriaLabel { get; set; } = "Piano keyboard";
+
+    protected override void OnInitialized() => Audio.ActiveNotesChanged += OnActiveChanged;
+
+    protected override void OnParametersSet()
+    {
+        _whiteKeys = [];
+        _blackKeys = [];
+        var whites = 0;
+        for (var midi = StartMidi; midi <= EndMidi; midi++)
+        {
+            if (Notation.IsBlackKey(midi))
+            {
+                // A black key straddles the boundary between the previous and next white key.
+                _blackKeys.Add(new Key(midi, whites * WhiteWidth - BlackWidth / 2));
+            }
+            else
+            {
+                _whiteKeys.Add(new Key(midi, whites * WhiteWidth));
+                whites++;
+            }
+        }
+
+        _width = whites * WhiteWidth;
+    }
+
+    // Razor reserves the <text> tag for its own markup blocks, so SVG <text> is emitted via the render tree.
+    private static RenderFragment SvgText(string cssClass, int x, int y, string content) => builder =>
+    {
+        builder.OpenElement(0, "text");
+        builder.AddAttribute(1, "class", cssClass);
+        builder.AddAttribute(2, "x", x);
+        builder.AddAttribute(3, "y", y);
+        builder.AddContent(4, content);
+        builder.CloseElement();
+    };
+
+    private KeyMark? MarkFor(int midi) =>
+        Marks is not null && Marks.TryGetValue(midi, out var m) ? m : null;
+
+    private string KeyClasses(int midi, KeyMark? mark, bool black)
+    {
+        var classes = black ? "key black" : "key white";
+        if (mark is not null) classes += mark.IsRoot ? " marked root" : " marked";
+        if (Audio.IsActive(midi)) classes += " playing";
+        return classes;
+    }
+
+    private async Task PressAsync(int midi)
+    {
+        if (PlayOnClick) await Audio.PlayNoteAsync(midi);
+        await OnKeyPressed.InvokeAsync(midi);
+    }
+
+    private Task OnKeyDown(KeyboardEventArgs e, int midi) =>
+        e.Key is "Enter" or " " ? PressAsync(midi) : Task.CompletedTask;
+
+    private void OnActiveChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Audio.ActiveNotesChanged -= OnActiveChanged;
+}

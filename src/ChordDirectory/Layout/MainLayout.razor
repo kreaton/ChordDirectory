@@ -1,0 +1,28 @@
+@inherits LayoutComponentBase
+@inject NavigationManager Nav
+
+<div class="app">
+    <header class="topbar">
+        <a class="brand" href="" aria-label="Chord Directory home">
+            <span class="logo" aria-hidden="true">♪</span>
+            <span>Chord Directory</span>
+        </a>
+        <nav aria-label="Main">
+            <a href="" class="@(OnIdentify ? "" : "active")">Directory</a>
+            <a href="identify" class="@(OnIdentify ? "active" : "")">Identify</a>
+        </nav>
+    </header>
+
+    <main>
+        @Body
+    </main>
+
+    <footer class="footer">
+        Click any key to hear it · all sound is synthesised in your browser with Web Audio
+        <div class="build">@BuildInfo.Display · <a href="https://github.com/kreaton/ChordDirectory">GitHub</a></div>
+    </footer>
+</div>
+
+@code {
+    private bool OnIdentify => Nav.ToBaseRelativePath(Nav.Uri).StartsWith("identify", StringComparison.OrdinalIgnoreCase);
+}

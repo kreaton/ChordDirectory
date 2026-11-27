@@ -1,0 +1,252 @@
+@page "/"
+@page "/chord/{RootSlug}/{TypeId}"
+@inject AudioService Audio
+@inject NavigationManager Nav
+
+<PageTitle>@_chord.Symbol – @_chord.FullName · Chord Directory</PageTitle>
+
+<div class="browse">
+    @* ───────────────────────────── Chord detail ───────────────────────────── *@
+    <section class="panel detail" aria-labelledby="chord-title">
+        <header class="detail-head">
+            <div>
+                <h1 id="chord-title" tabindex="-1">@_chord.Symbol</h1>
+                <p class="sub">@_chord.FullName</p>
+            </div>
+            <div class="label-toggle" role="group" aria-label="Key labels">
+                <button class="seg @(_showDegrees ? "" : "on")" @onclick="() => _showDegrees = false">Notes</button>
+                <button class="seg @(_showDegrees ? "on" : "")" @onclick="() => _showDegrees = true">Intervals</button>
+            </div>
+        </header>
+
+        <p class="desc">@_type.Description</p>
+
+        <ul class="note-chips" aria-label="Notes in this chord">
+            @foreach (var note in _chord.Notes)
+            {
+                <li class="chip @(note.IsRoot ? "root" : "")">
+                    <strong>@note.Name</strong>
+                    <small>@note.Degree</small>
+                </li>
+            }
+        </ul>
+
+        <PianoKeyboard StartMidi="_rangeStart" EndMidi="_rangeEnd" Marks="Marks"
+                       AriaLabel="@($"{_chord.Symbol} on the keyboard")" />
+
+        <div class="play-row">
+            <button class="btn primary" @onclick="() => PlayAsync(PlayStyle.Block)">▶ Play chord</button>
+            <button class="btn" @onclick="() => PlayAsync(PlayStyle.Strum)">Strum</button>
+            <button class="btn" @onclick="() => PlayAsync(PlayStyle.ArpUp)">Arpeggio ↑</button>
+            <button class="btn" @onclick="() => PlayAsync(PlayStyle.ArpDown)">Arpeggio ↓</button>
+            <button class="btn ghost" @onclick="Audio.StopAsync" aria-label="Stop sound">■ Stop</button>
+        </div>
+
+        @if (_chord.MaxInversion > 0)
+        {
+            <div class="inversions" role="group" aria-label="Inversions">
+                <span class="muted">Voicing</span>
+                @for (var i = 0; i <= _chord.MaxInversion; i++)
+                {
+                    var inv = i;
+                    <button class="seg @(inv == _inversion ? "on" : "")" title="@Chord.InversionName(inv)"
+                            @onclick="() => SetInversion(inv)">
+                        @(inv == 0 ? "Root" : inv + (inv == 1 ? "st" : inv == 2 ? "nd" : "rd"))
+                    </button>
+                }
+            </div>
+        }
+
+        <dl class="facts">
+            <div><dt>Formula</dt><dd>@_formula</dd></div>
+            <div><dt>Steps</dt><dd>@_type.StepPattern <small class="muted">semitones</small></dd></div>
+            <div><dt>Also written</dt><dd>@_alsoWritten</dd></div>
+        </dl>
+
+        @if (_sameNotes.Count > 0)
+        {
+            <div class="related">
+                <span class="muted">Same notes, different name</span>
+                <ul>
+                    @foreach (var match in _sameNotes)
+                    {
+                        <li><a href="@match.Chord.Href" title="@match.Name">@match.Symbol</a></li>
+                    }
+                </ul>
+            </div>
+        }
+
+        <details class="settings-box">
+            <summary>Sound settings</summary>
+            <PlayerSettings />
+        </details>
+    </section>
+
+    @* ───────────────────────────── Directory ───────────────────────────── *@
+    <section class="panel directory" aria-label="Chord directory">
+        <div class="root-picker" role="group" aria-label="Root note">
+            @for (var pc = 0; pc < 12; pc++)
+            {
+                var root = Roots.ForPitchClass(pc, _preferSharps);
+                <button class="root-btn @(Notation.IsBlackKey(pc) ? "black" : "") @(root == GridRoot ? "on" : "")"
+                        @onclick="() => SelectRoot(root)">@root.Display</button>
+            }
+            <button class="root-btn accidental" @onclick="ToggleAccidentals"
+                    title="Switch between sharp and flat spellings">@(_preferSharps ? "♯" : "♭")</button>
+        </div>
+
+        <div class="search">
+            <input type="search" placeholder="Search: F#m7, dominant, sus…" aria-label="Search chords"
+                   @bind="Query" @bind:event="oninput" />
+        </div>
+
+        @if (!_searching)
+        {
+            <div class="tabs" role="tablist" aria-label="Chord families">
+                <button role="tab" class="tab @(_category is null ? "on" : "")" @onclick="() => _category = null">All</button>
+                @foreach (var category in ChordCatalog.Categories)
+                {
+                    var c = category;
+                    <button role="tab" class="tab @(_category == c ? "on" : "")" @onclick="() => _category = c">@c</button>
+                }
+            </div>
+        }
+
+        @if (_visibleTypes.Count == 0)
+        {
+            <p class="muted empty">No chords match “@Query”.</p>
+        }
+        else
+        {
+            <ul class="cards">
+                @foreach (var type in _visibleTypes)
+                {
+                    var t = type;
+                    var chord = new Chord(GridRoot, t);
+                    <li class="card @(t == _type && GridRoot == _root ? "active" : "")">
+                        <a class="card-main" href="@chord.Href">
+                            <span class="sym">@chord.Symbol</span>
+                            <span class="nm">@t.Name</span>
+                        </a>
+                        <button class="icon-btn" aria-label="@($"Play {chord.Symbol}")"
+                                @onclick="() => QuickPlayAsync(chord)">▶</button>
+                    </li>
+                }
+            </ul>
+        }
+    </section>
+</div>
+
+@code {
+    [Parameter] public string? RootSlug { get; set; }
+    [Parameter] public string? TypeId { get; set; }
+
+    private Root _root = Roots.C;
+    private ChordType _type = ChordCatalog.All[0];
+    private Chord _chord = new(Roots.C, ChordCatalog.All[0]);
+    private int _inversion;
+    private bool _showDegrees;
+    private bool _preferSharps;
+    private string? _category;
+    private string _query = "";
+    private SearchResult? _search;
+
+    private IReadOnlyList<VoicedNote> _voicing = [];
+    private int _rangeStart = 48;
+    private int _rangeEnd = 72;
+    private IReadOnlyList<ChordMatch> _sameNotes = [];
+    private string _formula = "";
+    private string _alsoWritten = "";
+
+    private bool _searching => _search is not null;
+
+    /// <summary>Highlighted keys; rebuilt on every render so the Notes/Intervals toggle applies instantly.</summary>
+    private IReadOnlyDictionary<int, KeyMark> Marks => _voicing.ToDictionary(
+        v => v.Midi,
+        v => new KeyMark(_showDegrees ? v.Degree : v.Name, v.IsRoot));
+
+    /// <summary>The root used for the cards in the grid (a root typed into the search box wins).</summary>
+    private Root GridRoot => _search?.Root ?? _root;
+
+    private IReadOnlyList<ChordType> _visibleTypes =>
+        _search is not null
+            ? _search.Types
+            : _category is null ? ChordCatalog.All : ChordCatalog.InCategory(_category).ToList();
+
+    private string Query
+    {
+        get => _query;
+        set
+        {
+            _query = value;
+            _search = string.IsNullOrWhiteSpace(value) ? null : ChordCatalog.Search(value);
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        var newRoot = Roots.FromSlug(RootSlug) ?? _root;
+        var newType = ChordCatalog.Find(TypeId) ?? _type;
+
+        if (newRoot != _root || newType != _type) _inversion = 0;
+        _root = newRoot;
+        _type = newType;
+
+        // Keep the ♯/♭ switch in step with the chord being shown.
+        if (_root.Accidental != 0) _preferSharps = _root.Accidental > 0;
+
+        Rebuild();
+    }
+
+    private void Rebuild()
+    {
+        _chord = new Chord(_root, _type);
+        _inversion = Math.Min(_inversion, _chord.MaxInversion);
+        _voicing = _chord.Voice(_inversion);
+
+        var low = _voicing.Min(v => v.Midi);
+        var high = _voicing.Max(v => v.Midi);
+        _rangeStart = low / 12 * 12;
+        _rangeEnd = Math.Max(_rangeStart + 24, (high + 11) / 12 * 12);
+
+        _formula = string.Join("  ", _type.Intervals.Select(i => i.Label));
+        _alsoWritten = string.Join(",  ", new[] { _chord.Symbol }
+            .Concat(_type.Aliases.Select(a => _root.Display + a))
+            .Distinct());
+
+        _sameNotes = ChordFinder.Identify(_voicing.Select(v => v.Midi), _preferSharps)
+            .Where(m => !(m.IsRootPosition && m.Chord.Type == _type && m.Chord.Root.PitchClass == _root.PitchClass))
+            .Take(5)
+            .ToList();
+    }
+
+    private void SelectRoot(Root root)
+    {
+        _search = null;
+        _query = "";
+        Nav.NavigateTo($"chord/{root.Slug}/{_type.Id}");
+    }
+
+    private void ToggleAccidentals()
+    {
+        _preferSharps = !_preferSharps;
+
+        // If the chord's root has an accidental, jump to its enharmonic spelling.
+        // Otherwise the URL stays the same, so respell the "same notes" list here.
+        if (_root.Accidental != 0)
+            Nav.NavigateTo($"chord/{Roots.ForPitchClass(_root.PitchClass, _preferSharps).Slug}/{_type.Id}");
+        else
+            Rebuild();
+    }
+
+    private void SetInversion(int inversion)
+    {
+        _inversion = inversion;
+        Rebuild();
+        _ = PlayAsync(PlayStyle.Block);
+    }
+
+    private Task PlayAsync(PlayStyle style) => Audio.PlayChordAsync(_voicing.Select(v => v.Midi), style);
+
+    private Task QuickPlayAsync(Chord chord) => Audio.PlayChordAsync(chord.Voice().Select(v => v.Midi));
+}

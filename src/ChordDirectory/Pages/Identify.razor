@@ -1,0 +1,109 @@
+@page "/identify"
+@inject AudioService Audio
+
+<PageTitle>Identify a chord · Chord Directory</PageTitle>
+
+<section class="panel identify">
+    <header class="detail-head">
+        <div>
+            <h1 tabindex="-1">Identify a chord</h1>
+            <p class="sub">Press the keys you're holding and see what the chord is called.</p>
+        </div>
+        <div class="label-toggle" role="group" aria-label="Accidentals">
+            <button class="seg @(_preferSharps ? "on" : "")" @onclick="() => SetPreferSharps(true)">♯</button>
+            <button class="seg @(_preferSharps ? "" : "on")" @onclick="() => SetPreferSharps(false)">♭</button>
+        </div>
+    </header>
+
+    <PianoKeyboard StartMidi="48" EndMidi="84" Marks="Marks" ShowNames="true"
+                   OnKeyPressed="Toggle" AriaLabel="Select the notes of your chord" />
+
+    <div class="play-row">
+        <button class="btn primary" disabled="@(_selected.Count == 0)" @onclick="() => PlayAsync(PlayStyle.Block)">▶ Play selection</button>
+        <button class="btn" disabled="@(_selected.Count == 0)" @onclick="() => PlayAsync(PlayStyle.ArpUp)">Arpeggio ↑</button>
+        <button class="btn ghost" disabled="@(_selected.Count == 0)" @onclick="Clear">Clear</button>
+    </div>
+
+    @if (_selected.Count == 0)
+    {
+        <p class="muted hint">Tip: try C, E and G, or press the same keys as your favourite song's opening chord.</p>
+    }
+    else
+    {
+        <p class="selected-notes">
+            <span class="muted">Selected:</span>
+            @string.Join("  ·  ", _selected.Order().Select(m => Notation.MidiName(m, _preferSharps)))
+        </p>
+
+        @if (_matches.Count == 0)
+        {
+            <p class="muted">
+                @(_selected.Count < 2
+                    ? "Add at least one more note."
+                    : "No chord in the directory has exactly these notes. Try adding or removing one.")
+            </p>
+        }
+        else
+        {
+            <ul class="results">
+                @foreach (var match in _matches)
+                {
+                    <li class="result @(match == _matches[0] ? "best" : "")">
+                        <a href="@match.Chord.Href">
+                            <span class="sym">@match.Symbol</span>
+                            <span class="nm">@match.Name</span>
+                            <span class="notes">@string.Join(" ", match.Chord.Notes.Select(n => n.Name))</span>
+                        </a>
+                    </li>
+                }
+            </ul>
+        }
+    }
+
+    <details class="settings-box">
+        <summary>Sound settings</summary>
+        <PlayerSettings />
+    </details>
+</section>
+
+@code {
+    private readonly HashSet<int> _selected = [];
+    private bool _preferSharps;
+    private IReadOnlyList<ChordMatch> _matches = [];
+
+    private IReadOnlyDictionary<int, KeyMark> Marks
+    {
+        get
+        {
+            var rootPc = _matches.Count > 0 ? _matches[0].Chord.Root.PitchClass : -1;
+            return _selected.ToDictionary(
+                m => m,
+                m => new KeyMark(Notation.PitchClassName(m, _preferSharps), Notation.Mod12(m) == rootPc));
+        }
+    }
+
+    protected override void OnParametersSet() => Recalculate();
+
+    private void Toggle(int midi)
+    {
+        if (!_selected.Remove(midi)) _selected.Add(midi);
+        Recalculate();
+    }
+
+    // Chord names are spelled when matched, so switching ♯/♭ has to re-run the match.
+    private void SetPreferSharps(bool preferSharps)
+    {
+        _preferSharps = preferSharps;
+        Recalculate();
+    }
+
+    private void Clear()
+    {
+        _selected.Clear();
+        Recalculate();
+    }
+
+    private void Recalculate() => _matches = ChordFinder.Identify(_selected, _preferSharps);
+
+    private Task PlayAsync(PlayStyle style) => Audio.PlayChordAsync(_selected, style);
+}
